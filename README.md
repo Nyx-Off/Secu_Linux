@@ -2,6 +2,8 @@
 
 **Matière :** Administration Système Linux  
 
+---
+
 ## Partie I — Administration des utilisateurs
 
 ### 1. Connexion en tant que root
@@ -590,15 +592,19 @@ ls -ltr
 ```
 
 ```
-total 332
--rw-r--r-- 1 root root      0 Feb 10 00:00 alternatives.log
--rw-r----- 1 root adm    1234 Feb 11 08:12 kern.log
--rw-r----- 1 root adm    5678 Feb 11 12:45 daemon.log
--rw-r----- 1 root adm    2345 Feb 12 09:30 auth.log
--rw-r--r-- 1 root root   3456 Feb 12 14:20 dpkg.log
--rw-r----- 1 root adm    8901 Feb 13 10:09 syslog
--rw-r----- 1 root adm    4567 Feb 13 10:21 messages
-...
+total 240
+-rw-rw----  1 root utmp                 0 Oct  1 16:43 btmp
+lrwxrwxrwx  1 root root                39 Oct  1 16:43 README -> ../../usr/share/doc/systemd/README.logs
+drwx------  2 root root              4096 Oct  1 16:43 private
+drwxr-sr-x+ 2 root systemd-journal   4096 Oct  1 16:43 journal
+drwxr-xr-x  3 root root              4096 Oct  1 16:43 runit
+-rw-r--r--  1 root root                 0 Oct  1 16:44 syslog
+drwxr-xr-x  2 root root              4096 Feb 13 10:10 apt
+-rw-r--r--  1 root root             13023 Feb 13 10:10 alternatives.log
+-rw-r--r--  1 root root            194527 Feb 13 10:10 dpkg.log
+-rw-rw-r--  1 root utmp               384 Feb 13 10:12 wtmp
+-rw-rw-r--  1 root utmp               292 Feb 13 10:12 lastlog
+-rw-r--r--  1 root root              8192 Feb 13 10:20 wtmp.db
 ```
 
 **Explication des options :**
@@ -609,6 +615,8 @@ total 332
 
 La combinaison `-ltr` permet de visualiser rapidement quels fichiers de logs ont été modifiés récemment (ils apparaissent en bas de la liste).
 
+**Observations :** les fichiers les plus anciens datent du 1er octobre (installation du système), tandis que les plus récents datent du 13 février (jour du TP). On remarque également que le fichier `syslog` est vide (taille 0) et que le fichier `messages` est absent.
+
 ---
 
 ### 3. Consulter le fichier des messages
@@ -617,62 +625,137 @@ La combinaison `-ltr` permet de visualiser rapidement quels fichiers de logs ont
 cat /var/log/messages
 ```
 
-Si le fichier est volumineux, on peut utiliser un pager pour une lecture plus confortable :
-
-```bash
-less /var/log/messages
+```
+cat: /var/log/messages: No such file or directory
 ```
 
-> **Note Debian :** sur certaines installations Debian, le fichier `/var/log/messages` peut ne pas exister par défaut (selon la configuration de `rsyslog`). Dans ce cas, le fichier équivalent principal est `/var/log/syslog`. Si `/var/log/messages` est absent, on peut soit le consulter via `syslog`, soit activer la règle correspondante dans `/etc/rsyslog.conf` en décommentant la ligne :
->
-> ```
-> *.=info;*.=notice;*.=warn;\
->     auth,authpriv.none;\
->     cron,daemon.none;\
->     mail,news.none          -/var/log/messages
-> ```
->
-> Puis redémarrer rsyslog :
->
-> ```bash
-> systemctl restart rsyslog
-> ```
+Le fichier `/var/log/messages` n'existe pas. On tente alors `/var/log/syslog` :
 
-Ce fichier contient les messages d'information générale du système : démarrage de services, connexions réseau, événements matériels, etc. Il est essentiel pour le diagnostic et le dépannage.
+```bash
+cat /var/log/syslog
+```
+
+Le fichier existe mais est **vide** (0 octets). Cela est dû au fait que **rsyslog n'est pas installé** sur cette installation Debian minimale. Sans démon syslog, aucun fichier journal texte n'est généré.
+
+**Installation de rsyslog :**
+
+```bash
+apt install rsyslog
+```
+
+```
+Installing:
+  rsyslog
+
+Installing dependencies:
+  libestr0  libfastjson4  liblognorm5
+
+Summary:
+  Upgrading: 0, Installing: 4, Removing: 0, Not Upgrading: 0
+  Download size: 863 kB
+...
+Setting up rsyslog (8.2504.0-1) ...
+Created symlink '/etc/systemd/system/syslog.service' → '/usr/lib/systemd/system/rsyslog.service'.
+```
+
+**Tentative de démarrage via systemd :**
+
+```bash
+systemctl start rsyslog
+```
+
+```
+Job for rsyslog.service failed because the control process exited with error code.
+```
+
+```bash
+systemctl status rsyslog
+```
+
+```
+× rsyslog.service - System Logging Service
+     Active: failed (Result: exit-code)
+    Process: 3733 ExecStart=/usr/sbin/rsyslogd -n -iNONE (code=exited, status=226/NAMESPACE)
+```
+
+Le démarrage via systemd échoue avec le code **226/NAMESPACE**. Cette erreur est liée aux restrictions de sécurité systemd (`ProtectSystem`, `PrivateDevices`, etc.) qui ne sont pas compatibles avec l'environnement **conteneur LXC** dans lequel tourne cette Debian (sur un hôte Proxmox VE).
+
+De même, `journalctl` ne retourne aucune entrée car `systemd-journald` ne fonctionne pas non plus dans ce conteneur :
+
+```bash
+journalctl
+```
+
+```
+No journal files were found.
+-- No entries --
+```
+
+**Solution — lancement manuel de rsyslogd :**
+
+```bash
+/usr/sbin/rsyslogd
+```
+
+Cette fois rsyslog se lance correctement (sans les restrictions de namespace de systemd). Le fichier `/var/log/syslog` se remplit immédiatement :
+
+```bash
+ls -la /var/log/syslog /var/log/messages
+```
+
+```
+ls: cannot access '/var/log/messages': No such file or directory
+-rw-r--r-- 1 root root 202154 Feb 13 13:39 /var/log/syslog
+```
+
+**Consultation du fichier syslog :**
+
+```bash
+less /var/log/syslog
+```
+
+Extrait (premières lignes — logs du noyau) :
+
+```
+2026-02-13T13:35:42 debian kernel: Linux version 6.17.4-2-pve (build@proxmox)...
+2026-02-13T13:35:42 debian kernel: DMI: HP HP ProDesk 600 G6 Desktop Mini PC/8715
+2026-02-13T13:35:42 debian kernel: smpboot: CPU0: Intel(R) Core(TM) i5-10500T CPU @ 2.30GHz
+2026-02-13T13:35:42 debian kernel: Memory: 16022344K/16547040K available
+2026-02-13T13:35:42 debian kernel: e1000e 0000:00:1f.6 nic0: NIC Link is Up 100 Mbps Full Duplex
+2026-02-13T13:35:42 debian kernel: EXT4-fs (dm-1): mounted filesystem ... r/w with ordered data mode
+...
+```
+
+Le fichier contient l'intégralité des messages du noyau depuis le démarrage du système, les événements réseau, les montages de systèmes de fichiers, ainsi que de nombreux messages d'audit AppArmor liés aux conteneurs LXC.
+
+> **Note :** `/var/log/messages` n'est pas créé par défaut sur Debian. La configuration par défaut de rsyslog (`/etc/rsyslog.conf`) redirige les messages principaux vers `/var/log/syslog`. Pour activer `/var/log/messages`, il faut décommenter la règle correspondante dans `/etc/rsyslog.conf`.
 
 ---
 
 ### 4. Visualiser les dernières lignes avec mise à jour en temps réel
 
+Maintenant que rsyslog fonctionne (lancé manuellement), on peut utiliser `tail -f` sur `/var/log/syslog` :
+
 ```bash
-tail -f /var/log/messages
+tail -f /var/log/syslog
 ```
 
 ```
-Feb 13 10:09:17 debian cron[77]: (CRON) INFO (pidfile fd = 3)
-Feb 13 10:09:17 debian cron[77]: (CRON) INFO (Running @reboot jobs)
-Feb 13 10:18:42 debian useradd[1234]: new user: name=util1, UID=2000, GID=1500
-Feb 13 10:18:55 debian useradd[1256]: new user: name=util2, UID=2001, GID=1501
-Feb 13 10:19:03 debian useradd[1278]: new user: name=util3, UID=2002, GID=1523
+2026-02-13T13:39:35 debian kernel: audit: type=1400 apparmor="DENIED" operation="userns_create"...
+2026-02-13T13:39:35 debian kernel: audit: type=1400 apparmor="DENIED" operation="mount"...
 ...
 ```
 
 Pour quitter l'affichage en temps réel : **Ctrl + C**.
 
-**Explication :**
+> **Note :** `tail -f /var/log/messages` n'est pas possible sur cette Debian car `/var/log/messages` n'est pas créé par défaut (voir note section 3). On utilise `/var/log/syslog` à la place.
 
-- `tail` → affiche les dernières lignes d'un fichier (par défaut les 10 dernières)
-- `-f` (follow) → maintient le fichier ouvert et affiche en continu les nouvelles lignes qui y sont ajoutées
+**Explication des commandes :**
 
-Cette commande est très utilisée en administration système pour **surveiller en direct** l'activité du système, par exemple lors du démarrage d'un service, d'une tentative de connexion suspecte ou du diagnostic d'une erreur.
+- `tail -f <fichier>` → affiche les dernières lignes d'un fichier et suit en continu les nouvelles lignes ajoutées. L'option `-f` signifie "follow".
+- `tail -n 50 -f /var/log/syslog` → affiche les 50 dernières lignes puis suit en temps réel.
 
-> **Astuce :** pour afficher davantage de lignes initiales avant le suivi en temps réel, on peut combiner les options :
->
-> ```bash
-> tail -n 50 -f /var/log/messages
-> ```
->
-> Cela affiche les 50 dernières lignes puis continue le suivi.
+Cette commande est essentielle en administration système pour **surveiller en direct** l'activité du système : démarrage de services, tentatives de connexion, erreurs, etc.
 
 ---
 
@@ -694,5 +777,5 @@ Cette commande est très utilisée en administration système pour **surveiller 
 | Supprimer la crontab d'un user (root) | `crontab -r -u <user>` |
 | Créer une tâche cron système | Fichier dans `/etc/cron.d/` |
 | Lister les logs du plus ancien au plus récent | `ls -ltr /var/log` |
-| Consulter un fichier de log | `less /var/log/messages` |
-| Suivre un log en temps réel | `tail -f /var/log/messages` |
+| Consulter un fichier de log | `less /var/log/syslog` ou `journalctl` |
+| Suivre un log en temps réel | `tail -f /var/log/syslog` ou `journalctl -f` |
